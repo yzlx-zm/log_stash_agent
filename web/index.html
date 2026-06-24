@@ -226,8 +226,10 @@
     <div class="card" style="margin-bottom:16px;">
       <div class="search-bar">
         <input type="text" id="searchInput" placeholder="🔍 搜索关键词（支持中文）…" onkeydown="if(event.key==='Enter')doSearch()">
+        <button class="btn btn-primary btn-sm" onclick="doSearch()" title="搜索">🔍</button>
         <select id="filterProject" onchange="doSearch()"><option value="">全部项目</option></select>
         <select id="filterType" onchange="doSearch()"><option value="">全部类型</option></select>
+        <select id="filterTag" onchange="doSearch()"><option value="">全部标签</option></select>
         <select id="filterStatus" onchange="doSearch()">
           <option value="">全部状态</option>
           <option value="planned">计划中</option>
@@ -387,13 +389,15 @@ async function loadStats() {
 // ========================================
 async function loadFilters() {
   try {
-    const [projectsR, typesR] = await Promise.all([
+    const [projectsR, typesR, tagsR] = await Promise.all([
       fetch('/api/projects'),
-      fetch('/api/entries?limit=1000')
+      fetch('/api/entries?limit=1000'),
+      fetch('/api/tags')
     ]);
     const projects = await projectsR.json();
     const entriesData = await typesR.json();
     const entries = entriesData.entries || [];
+    const tags = await tagsR.json();
 
     // Projects
     const pSel = document.getElementById('filterProject');
@@ -408,13 +412,19 @@ async function loadFilters() {
       tSel.innerHTML += `<option value="${t}">${t}</option>`;
     }
 
+    // Tags
+    const tagSel = document.getElementById('filterTag');
+    for (const [tag, count] of Object.entries(tags).sort()) {
+      tagSel.innerHTML += `<option value="${tag}">${tag} (${count})</option>`;
+    }
+
     // Project datalist for add form
     const dl = document.getElementById('projectList');
     for (const p of projects) {
       dl.innerHTML += `<option value="${p}">`;
     }
 
-    document.getElementById('stashInfo').textContent = `${s.total || 0} 条记录`;
+    document.getElementById('stashInfo').textContent = `${entries.length || 0} 条记录`;
   } catch(e) { console.error(e); }
 }
 
@@ -426,6 +436,7 @@ async function doSearch(page = 0) {
   const q = document.getElementById('searchInput').value.trim();
   const project = document.getElementById('filterProject').value;
   const type = document.getElementById('filterType').value;
+  const tag = document.getElementById('filterTag').value;
   const status = document.getElementById('filterStatus').value;
   const fulltext = document.getElementById('fulltextToggle').checked ? '1' : '0';
 
@@ -433,6 +444,7 @@ async function doSearch(page = 0) {
   if (q) params.set('q', q);
   if (project) params.set('project', project);
   if (type) params.set('type', type);
+  if (tag) params.set('tag', tag);
   if (status) params.set('status', status);
   if (fulltext === '1') { params.set('fulltext', '1'); }
 
