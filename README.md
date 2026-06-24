@@ -17,20 +17,20 @@
 ## 快速开始
 
 ```bash
-# 1. 克隆并编译
+# 1. 克隆
 git clone https://github.com/yzlx-zm/log_stash_agent.git
 cd log_stash_agent
 npm install
-npm run build
 
-# 2. 进入你的压测日志目录，启动 Web 界面
-cd ~/projects/your-test-logs
-node /path/to/log_stash_agent/dist/main.js serve --port 3000
+# 2. 双击 start.bat 一键启动
+#    或者命令行：node dist/main.js serve --port 3000
 
-# 3. 浏览器打开 http://localhost:3000
+# 3. 浏览器自动打开 http://localhost:3000
 ```
 
 首次启动会自动初始化 stash，无需额外配置。
+
+> 💡 **最简单用法**：把 `start.bat` 复制到你的压测日志目录，双击即可。
 
 ## Web 界面操作
 
