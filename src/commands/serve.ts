@@ -625,25 +625,52 @@ export function serveCommand(program: Command): void {
             res.status(404).json({ error: "条目不存在" });
             return;
           }
-          const { unlink, stat: fsStat } = await import("node:fs/promises");
+          const { unlink, stat: fsStat, readdir: rd } = await import("node:fs/promises");
+          const { join } = await import("node:path");
+
+          // 递归列出目录中所有文件（排除 entries/ 和 .logstash/）
+          async function listFiles(dir: string): Promise<string[]> {
+            const results: string[] = [];
+            try {
+              const items = await rd(dir, { withFileTypes: true });
+              for (const item of items) {
+                if (item.name === "entries" || item.name === ".logstash" || item.name === ".git") continue;
+                const full = join(dir, item.name);
+                if (item.isDirectory()) {
+                  results.push(...await listFiles(full));
+                } else {
+                  results.push(full);
+                }
+              }
+            } catch { /* skip */ }
+            return results;
+          }
+
+          const allFiles = await listFiles(stashRoot);
           const deleted: string[] = [];
+
           for (const f of entry.files) {
-            // 从存储的文件名还原原始文件名（去掉时间戳前缀）
-            const parts = f.name.split("_");
-            // multer 文件名格式: timestamp_originalname
-            // 尝试还原原始文件名
+            // 还原原始文件名（去掉 multer 时间戳前缀）
             let originalName = f.name;
             if (/^\d{13}_/.test(f.name)) {
               originalName = f.name.replace(/^\d{13}_/, "");
             }
-            // 在 stash 根目录查找
-            const targetPath = resolve(stashRoot, originalName);
-            try {
-              await fsStat(targetPath);
-              await unlink(targetPath);
-              deleted.push(originalName);
-            } catch { /* 文件不存在 */ }
+
+            // 在目录中查找匹配的原始文件（按文件名）
+            for (const fp of allFiles) {
+              const base = fp.replace(/^.*[\\\/]/, ""); // basename
+              if (base === originalName || base === f.name) {
+                try {
+                  await unlink(fp);
+                  deleted.push(originalName);
+                  console.log(`[cleanup] Deleted: ${fp}`);
+                } catch { /* skip locked files */ }
+                break;
+              }
+            }
           }
+
+          console.log(`[cleanup] Entry ${req.params.id}: deleted ${deleted.length} of ${entry.files.length} original files`);
           res.json({ deleted, count: deleted.length });
         } catch (err: any) {
           console.error("[API Error]", err instanceof Error ? err.message : String(err));
