@@ -344,7 +344,9 @@
     </div>
     <div class="modal-body" id="modalBody"></div>
     <div class="modal-footer">
+      <button class="btn btn-outline btn-sm" onclick="analyzeEntry()" id="analyzeBtn">🤖 AI 分析</button>
       <button class="btn btn-outline btn-sm" onclick="editEntry()">✏️ 编辑</button>
+      <button class="btn btn-outline btn-sm" onclick="cleanupOriginals()" id="cleanupBtn">🧹 清理原始文件</button>
       <button class="btn btn-danger btn-sm" onclick="deleteEntryConfirm()">🗑 删除</button>
       <button class="btn btn-outline btn-sm" onclick="closeModal()">关闭</button>
     </div>
@@ -591,7 +593,23 @@ function renderDetail(e) {
     html += `<div style="margin-top:12px;"><strong style="font-size:13px;color:var(--text-muted);">关联条目</strong><div>${e.relatedEntries.map(id => `<span class="tag" style="cursor:pointer;" onclick="openDetail('${escHtml(id)}')">${escHtml(id)}</span>`).join(' ')}</div></div>`;
   }
 
+  // 分析笔记区域
+  html += `<div style="margin-top:16px;border-top:1px solid var(--border);padding-top:12px;">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
+      <strong style="font-size:13px;color:var(--text-muted);">📝 分析记录</strong>
+      <button class="btn btn-outline btn-xs" onclick="loadNotes('${escHtml(e.id)}')">加载笔记</button>
+    </div>
+    <textarea id="notesEditor" placeholder="在此编写测试分析、问题总结、结论…" style="width:100%;min-height:80px;border:1px solid var(--border);border-radius:8px;padding:8px;font-size:13px;font-family:inherit;resize:vertical;"></textarea>
+    <div style="display:flex;gap:6px;margin-top:6px;">
+      <button class="btn btn-primary btn-xs" onclick="saveNotes('${escHtml(e.id)}')">💾 保存笔记</button>
+      <span id="notesStatus" style="font-size:11px;color:var(--text-muted);"></span>
+    </div>
+  </div>`;
+
   document.getElementById('modalBody').innerHTML = html;
+
+  // 自动加载已有笔记
+  loadNotes(e.id);
 }
 
 function closeModal() {
@@ -809,6 +827,120 @@ function escHtml(s) {
   const d = document.createElement('div');
   d.textContent = s;
   return d.innerHTML;
+}
+
+// ========================================
+// Notes (analysis record)
+// ========================================
+async function loadNotes(entryId) {
+  try {
+    const r = await fetch('/api/entries/' + entryId + '/notes');
+    const d = await r.json();
+    const editor = document.getElementById('notesEditor');
+    if (editor) editor.value = d.notes || '';
+  } catch(e) { /* ignore */ }
+}
+
+async function saveNotes(entryId) {
+  const editor = document.getElementById('notesEditor');
+  if (!editor) return;
+  const status = document.getElementById('notesStatus');
+  try {
+    const r = await fetch('/api/entries/' + entryId + '/notes', {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ notes: editor.value })
+    });
+    if (!r.ok) throw new Error('failed');
+    if (status) { status.textContent = '✓ 已保存'; setTimeout(() => status.textContent = '', 2000); }
+  } catch(e) {
+    if (status) { status.textContent = '✗ 保存失败'; }
+  }
+}
+
+// ========================================
+// Cleanup original files
+// ========================================
+async function cleanupOriginals() {
+  if (!currentEntry) return;
+  if (!confirm('将删除当前目录中与已入库文件同名的原始文件。\n\n文件已在系统中安全保存，此操作仅删除原始副本。')) return;
+  const btn = document.getElementById('cleanupBtn');
+  btn.disabled = true; btn.textContent = '清理中...';
+  try {
+    const r = await fetch('/api/entries/' + currentEntry.id + '/cleanup-originals', { method: 'POST' });
+    const d = await r.json();
+    btn.textContent = '🧹 清理原始文件';
+    btn.disabled = false;
+    if (d.count > 0) {
+      toast('已清理 ' + d.count + ' 个原始文件', 'success');
+    } else {
+      toast('未找到可清理的原始文件', 'success');
+    }
+  } catch(e) {
+    btn.disabled = false; btn.textContent = '🧹 清理原始文件';
+    toast('清理失败', 'error');
+  }
+}
+
+// ========================================
+// AI Analysis
+// ========================================
+async function analyzeEntry() {
+  if (!currentEntry) return;
+  const btn = document.getElementById('analyzeBtn');
+  btn.disabled = true; btn.textContent = '⏳ 分析中...';
+  try {
+    const r = await fetch('/api/entries/' + currentEntry.id + '/analyze', { method: 'POST' });
+    const data = await r.json();
+
+    // 把分析数据展示出来，并填充 prompt 到笔记编辑器
+    let summary = '# AI 分析结果\n\n';
+    summary += '> 请将以下内容发送给 AI 助手进行分析，或手动填写分析结论。\n\n';
+    summary += '## 测试概要\n';
+    summary += '- 项目: ' + (data.project || '') + '\n';
+    summary += '- 测试类型: ' + (data.testType || '') + '\n';
+    summary += '- 测试人员: ' + (data.tester || '') + '\n';
+    summary += '- 状态: ' + (data.status || '') + '\n\n';
+
+    if (data.description) {
+      summary += '## 测试描述\n' + data.description + '\n\n';
+    }
+    if (data.environment && Object.keys(data.environment).length > 0) {
+      summary += '## 环境参数\n';
+      for (const [k, v] of Object.entries(data.environment)) {
+        summary += '- ' + k + ': ' + v + '\n';
+      }
+      summary += '\n';
+    }
+    if (data.results && Object.keys(data.results).length > 0) {
+      summary += '## 测试结果\n';
+      for (const [k, v] of Object.entries(data.results)) {
+        summary += '- ' + k + ': ' + v + '\n';
+      }
+      summary += '\n';
+    }
+    summary += '## 结论\n';
+    summary += '1. **测试结论**: \n';
+    summary += '2. **关键发现**: \n';
+    summary += '3. **风险与建议**: \n';
+    summary += '4. **一句话总结**: \n';
+
+    // 填入笔记编辑器
+    const editor = document.getElementById('notesEditor');
+    if (editor) {
+      // 如果已有笔记则追加，否则替换
+      if (editor.value.trim() && editor.value.trim() !== summary.trim()) {
+        editor.value = editor.value + '\n\n---\n\n' + summary;
+      } else {
+        editor.value = summary;
+      }
+    }
+
+    btn.disabled = false; btn.textContent = '🤖 AI 分析';
+    toast('分析模板已生成，请补充结论后保存', 'success');
+  } catch(e) {
+    btn.disabled = false; btn.textContent = '🤖 AI 分析';
+    toast('分析失败', 'error');
+  }
 }
 
 async function toggleKeyFile(entryId, filename) {

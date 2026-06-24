@@ -33,6 +33,59 @@ function safeParseInt(val: string | undefined, defaultVal: number): number {
   return isNaN(n) || n < 0 ? defaultVal : n;
 }
 
+/** 构建 AI 分析提示词 */
+function buildAnalysisPrompt(data: any): string {
+  const testTypes: Record<string, string> = {
+    throughput: "吞吐量测试", latency: "延迟测试", stability: "稳定性测试",
+    "connection-drop": "断连测试", "packet-loss": "丢包测试", bandwidth: "带宽测试",
+    stress: "压力测试", regression: "回归测试",
+  };
+  const typeName = testTypes[data.testType] || data.testType;
+
+  let p = `请分析以下压测记录并生成结构化总结：
+
+## 测试概要
+- 项目: ${data.project}
+- 测试类型: ${typeName}
+- 标题: ${data.title}
+- 测试人员: ${data.tester || "未知"}
+- 状态: ${data.status}
+- 标签: ${data.tags?.join(", ") || "无"}
+`;
+
+  if (data.description) {
+    p += `\n## 测试描述\n${data.description}\n`;
+  }
+
+  if (data.environment && Object.keys(data.environment).length > 0) {
+    p += `\n## 环境参数\n`;
+    for (const [k, v] of Object.entries(data.environment)) {
+      p += `- ${k}: ${v}\n`;
+    }
+  }
+
+  if (data.results && Object.keys(data.results).length > 0) {
+    p += `\n## 测试结果\n`;
+    for (const [k, v] of Object.entries(data.results)) {
+      p += `- ${k}: ${v}\n`;
+    }
+  }
+
+  if (data.fileContents?.length > 0) {
+    p += `\n## 日志/PACP 文件摘要 (共 ${data.files?.length || 0} 个文件)\n`;
+    for (const fc of data.fileContents) {
+      p += `\n### ${fc.name}\n\`\`\`\n${fc.preview}\n\`\`\`\n`;
+    }
+  }
+
+  p += `\n---\n请按以下格式输出分析结论：
+1. **测试结论**: 是否通过？主要发现了什么问题？
+2. **关键发现**: 列出 1-3 个最重要的发现
+3. **风险与建议**: 有哪些潜在风险？如何改进？
+4. **一句话总结**: 用一句话概括本次测试`;
+  return p;
+}
+
 export function serveCommand(program: Command): void {
   program
     .command("serve")
@@ -451,6 +504,151 @@ export function serveCommand(program: Command): void {
           res.setHeader("Content-Disposition", `inline; filename="${file.name}"`);
           createReadStream(filePath).pipe(res);
         } catch (err: any) {
+          res.status(500).json({ error: "服务器内部错误" });
+        }
+      });
+
+      // PUT /api/entries/:id/notes — 保存分析笔记
+      app.put("/api/entries/:id/notes", async (req, res) => {
+        try {
+          const entry = await readEntry(stashRoot, req.params.id);
+          if (!entry) {
+            res.status(404).json({ error: "条目不存在" });
+            return;
+          }
+          const { notes } = req.body;
+          if (typeof notes !== "string") {
+            res.status(400).json({ error: "notes 必须是字符串" });
+            return;
+          }
+          const { writeFile } = await import("node:fs/promises");
+          const notesPath = resolve(stashRoot, "entries", req.params.id, "notes.md");
+          await writeFile(notesPath, notes, "utf-8");
+          res.json({ saved: true });
+        } catch (err: any) {
+          console.error("[API Error]", err instanceof Error ? err.message : String(err));
+          res.status(500).json({ error: "服务器内部错误" });
+        }
+      });
+
+      // GET /api/entries/:id/notes — 读取分析笔记
+      app.get("/api/entries/:id/notes", async (req, res) => {
+        try {
+          const entry = await readEntry(stashRoot, req.params.id);
+          if (!entry) {
+            res.status(404).json({ error: "条目不存在" });
+            return;
+          }
+          const { readFile: rf } = await import("node:fs/promises");
+          const notesPath = resolve(stashRoot, "entries", req.params.id, "notes.md");
+          try {
+            const content = await rf(notesPath, "utf-8");
+            res.json({ notes: content });
+          } catch {
+            res.json({ notes: "" });
+          }
+        } catch (err: any) {
+          console.error("[API Error]", err instanceof Error ? err.message : String(err));
+          res.status(500).json({ error: "服务器内部错误" });
+        }
+      });
+
+      // POST /api/entries/:id/cleanup-originals — 清理原始文件
+      app.post("/api/entries/:id/cleanup-originals", async (req, res) => {
+        try {
+          const entry = await readEntry(stashRoot, req.params.id);
+          if (!entry) {
+            res.status(404).json({ error: "条目不存在" });
+            return;
+          }
+          const { unlink, stat: fsStat } = await import("node:fs/promises");
+          const deleted: string[] = [];
+          for (const f of entry.files) {
+            // 从存储的文件名还原原始文件名（去掉时间戳前缀）
+            const parts = f.name.split("_");
+            // multer 文件名格式: timestamp_originalname
+            // 尝试还原原始文件名
+            let originalName = f.name;
+            if (/^\d{13}_/.test(f.name)) {
+              originalName = f.name.replace(/^\d{13}_/, "");
+            }
+            // 在 stash 根目录查找
+            const targetPath = resolve(stashRoot, originalName);
+            try {
+              await fsStat(targetPath);
+              await unlink(targetPath);
+              deleted.push(originalName);
+            } catch { /* 文件不存在 */ }
+          }
+          res.json({ deleted, count: deleted.length });
+        } catch (err: any) {
+          console.error("[API Error]", err instanceof Error ? err.message : String(err));
+          res.status(500).json({ error: "服务器内部错误" });
+        }
+      });
+
+      // POST /api/entries/:id/analyze — AI 生成测试总结
+      app.post("/api/entries/:id/analyze", async (req, res) => {
+        try {
+          const entry = await readEntry(stashRoot, req.params.id);
+          if (!entry) {
+            res.status(404).json({ error: "条目不存在" });
+            return;
+          }
+
+          // 收集分析数据：元数据 + 关键文件内容
+          const analysisData: any = {
+            id: entry.id,
+            title: entry.title,
+            project: entry.project,
+            testType: entry.testType,
+            tester: entry.tester,
+            timestamp: entry.timestamp,
+            tags: entry.tags,
+            description: entry.description,
+            status: entry.status,
+            environment: entry.environment,
+            results: entry.results,
+            fileCount: entry.files.length,
+            files: entry.files.map((f) => ({
+              name: f.name,
+              type: f.type,
+              size: f.size,
+              key: f.key,
+            })),
+          };
+
+          // 读取关键标记的文本文件内容（限制每个文件前 50KB）
+          const { readFile: rf, stat: fsStat } = await import("node:fs/promises");
+          analysisData.fileContents = [];
+          for (const f of entry.files) {
+            if (f.type === "log" || f.key) {
+              try {
+                const fp = resolve(stashRoot, "entries", req.params.id, f.path);
+                const s = await fsStat(fp);
+                const bytesToRead = Math.min(s.size, 50 * 1024); // 最多读 50KB
+                // 简单读取文本文件
+                const { open } = await import("node:fs/promises");
+                const fd = await open(fp, "r");
+                const buf = Buffer.alloc(bytesToRead);
+                await fd.read(buf, 0, bytesToRead, 0);
+                await fd.close();
+                const text = buf.toString("utf-8").replace(/[\x00-\x08\x0b\x0c\x0e-\x1f]/g, "");
+                analysisData.fileContents.push({
+                  name: f.name,
+                  preview: text.slice(0, 5000), // 最多保留 5000 字符
+                });
+              } catch { /* 文件不可读 */ }
+            }
+          }
+
+          // 构建 AI 分析提示
+          const prompt = buildAnalysisPrompt(analysisData);
+          analysisData.prompt = prompt;
+
+          res.json(analysisData);
+        } catch (err: any) {
+          console.error("[API Error]", err instanceof Error ? err.message : String(err));
           res.status(500).json({ error: "服务器内部错误" });
         }
       });
