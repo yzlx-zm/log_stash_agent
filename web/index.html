@@ -1,0 +1,823 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>压测日志管理系统</title>
+  <style>
+    :root {
+      --bg: #f5f6fa;
+      --card: #fff;
+      --primary: #3b82f6;
+      --danger: #ef4444;
+      --success: #10b981;
+      --warn: #f59e0b;
+      --text: #1e293b;
+      --text-muted: #64748b;
+      --border: #e2e8f0;
+      --radius: 12px;
+      --shadow: 0 1px 3px rgba(0,0,0,.08);
+    }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.6;
+      min-height: 100vh;
+    }
+
+    /* === Header === */
+    header {
+      background: var(--card);
+      border-bottom: 1px solid var(--border);
+      padding: 0 24px;
+      height: 56px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      box-shadow: var(--shadow);
+    }
+    header h1 { font-size: 18px; font-weight: 700; display: flex; align-items: center; gap: 8px; }
+    header .badge { font-size: 11px; background: var(--primary); color: #fff; padding: 2px 8px; border-radius: 99px; }
+
+    /* === Layout === */
+    .layout { display: flex; gap: 24px; max-width: 1400px; margin: 24px auto; padding: 0 24px; }
+    .main { flex: 1; min-width: 0; }
+    .sidebar { width: 380px; flex-shrink: 0; display: flex; flex-direction: column; gap: 16px; }
+
+    /* === Card === */
+    .card {
+      background: var(--card);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      padding: 20px;
+    }
+    .card h3 { font-size: 14px; font-weight: 600; margin-bottom: 12px; color: var(--text); }
+    .card h3 .icon { margin-right: 6px; }
+
+    /* === Stats === */
+    .stats { display: flex; gap: 12px; margin-bottom: 20px; }
+    .stat {
+      flex: 1; background: var(--card); border-radius: var(--radius);
+      box-shadow: var(--shadow); padding: 16px; text-align: center;
+    }
+    .stat .num { font-size: 28px; font-weight: 700; color: var(--primary); }
+    .stat .label { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
+
+    /* === Search bar === */
+    .search-bar { display: flex; gap: 8px; margin-bottom: 16px; }
+    .search-bar input {
+      flex: 1; padding: 10px 16px; border: 1px solid var(--border);
+      border-radius: var(--radius); font-size: 14px; outline: none;
+    }
+    .search-bar input:focus { border-color: var(--primary); box-shadow: 0 0 0 3px rgba(59,130,246,.1); }
+    .search-bar select {
+      padding: 10px 12px; border: 1px solid var(--border);
+      border-radius: var(--radius); font-size: 14px; background: #fff; cursor: pointer;
+    }
+    .search-bar select:focus { border-color: var(--primary); }
+
+    /* === Buttons === */
+    .btn {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 10px 20px; border: none; border-radius: var(--radius);
+      font-size: 14px; font-weight: 500; cursor: pointer;
+      transition: all .15s; white-space: nowrap;
+    }
+    .btn-primary { background: var(--primary); color: #fff; }
+    .btn-primary:hover { background: #2563eb; }
+    .btn-outline { background: #fff; color: var(--primary); border: 1px solid var(--primary); }
+    .btn-outline:hover { background: #eff6ff; }
+    .btn-danger { background: var(--danger); color: #fff; }
+    .btn-danger:hover { background: #dc2626; }
+    .btn-sm { padding: 4px 12px; font-size: 12px; }
+    .btn-xs { padding: 2px 8px; font-size: 11px; border-radius: 6px; }
+
+    /* === Entry list === */
+    .entry-item {
+      display: flex; align-items: center; gap: 12px;
+      padding: 14px 16px; border-bottom: 1px solid var(--border);
+      cursor: pointer; transition: background .1s;
+    }
+    .entry-item:hover { background: #f8fafc; }
+    .entry-item .id { font-family: monospace; font-size: 12px; color: var(--primary); min-width: 130px; }
+    .entry-item .title { flex: 1; font-weight: 500; }
+    .entry-item .meta { font-size: 12px; color: var(--text-muted); display: flex; gap: 8px; }
+    .entry-item .meta span { padding: 1px 8px; background: #f1f5f9; border-radius: 99px; }
+    .status-dot {
+      display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 4px;
+    }
+    .status-dot.completed, .status-dot.reviewed { background: var(--success); }
+    .status-dot.in-progress { background: var(--warn); }
+    .status-dot.planned { background: #94a3b8; }
+    .status-dot.archived { background: #cbd5e1; }
+    .empty { text-align: center; padding: 40px; color: var(--text-muted); font-size: 14px; }
+
+    /* === Form === */
+    .form-group { margin-bottom: 12px; }
+    .form-group label {
+      display: block; font-size: 12px; font-weight: 600;
+      color: var(--text-muted); margin-bottom: 4px; text-transform: uppercase; letter-spacing: .5px;
+    }
+    .form-group input, .form-group textarea, .form-group select {
+      width: 100%; padding: 8px 12px; border: 1px solid var(--border);
+      border-radius: 8px; font-size: 14px; outline: none; font-family: inherit;
+    }
+    .form-group textarea { resize: vertical; min-height: 60px; }
+    .form-group input:focus, .form-group textarea:focus, .form-group select:focus {
+      border-color: var(--primary); box-shadow: 0 0 0 3px rgba(59,130,246,.1);
+    }
+    .form-row { display: flex; gap: 8px; }
+    .form-row > * { flex: 1; }
+
+    /* === File drop zone === */
+    .drop-zone {
+      border: 2px dashed var(--border); border-radius: var(--radius);
+      padding: 24px; text-align: center; cursor: pointer; transition: all .2s;
+      color: var(--text-muted); font-size: 13px;
+    }
+    .drop-zone:hover, .drop-zone.dragover { border-color: var(--primary); background: #eff6ff; }
+    .drop-zone .dz-icon { font-size: 32px; margin-bottom: 8px; }
+    .file-list { margin-top: 8px; }
+    .file-list .file-tag {
+      display: inline-flex; align-items: center; gap: 4px;
+      background: #f1f5f9; padding: 4px 10px; border-radius: 99px;
+      font-size: 12px; margin: 3px;
+    }
+    .file-tag .remove { cursor: pointer; color: var(--danger); font-weight: bold; margin-left: 4px; }
+    .file-list-scroll {
+      max-height: 180px; overflow-y: auto; border: 1px solid var(--border);
+      border-radius: 8px; padding: 6px; margin-top: 4px; background: #fafbfc;
+    }
+    .file-list-scroll:empty { display: none; }
+    .file-summary { font-size: 12px; color: var(--text-muted); margin-top: 4px; cursor: pointer; }
+
+    /* === Detail modal === */
+    .modal-overlay {
+      display: none; position: fixed; inset: 0; background: rgba(0,0,0,.4);
+      z-index: 100; justify-content: center; align-items: center;
+    }
+    .modal-overlay.active { display: flex; }
+    .modal {
+      background: var(--card); border-radius: var(--radius); width: 700px;
+      max-height: 85vh; overflow-y: auto; box-shadow: 0 20px 60px rgba(0,0,0,.2);
+    }
+    .modal-header {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 20px 24px; border-bottom: 1px solid var(--border);
+    }
+    .modal-header h2 { font-size: 16px; }
+    .modal-body { padding: 24px; }
+    .modal-footer { padding: 16px 24px; border-top: 1px solid var(--border); display: flex; gap: 8px; justify-content: flex-end; }
+    .close-btn { background: none; border: none; font-size: 20px; cursor: pointer; color: var(--text-muted); }
+
+    /* === Tags === */
+    .tag {
+      display: inline-block; padding: 3px 10px; background: #eff6ff;
+      color: var(--primary); border-radius: 99px; font-size: 12px; margin: 2px;
+    }
+
+    /* === Toast === */
+    .toast {
+      position: fixed; bottom: 24px; right: 24px; z-index: 200;
+      padding: 12px 24px; border-radius: var(--radius); color: #fff;
+      font-size: 14px; animation: slideIn .3s ease;
+    }
+    .toast.success { background: var(--success); }
+    .toast.error { background: var(--danger); }
+    @keyframes slideIn { from { transform: translateY(20px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+
+    /* === Responsive === */
+    @media (max-width: 900px) {
+      .layout { flex-direction: column; }
+      .sidebar { width: 100%; }
+      .stats { flex-wrap: wrap; }
+    }
+    .pagination { display: flex; gap: 8px; justify-content: center; margin-top: 16px; }
+  </style>
+</head>
+<body>
+
+<!-- Header -->
+<header>
+  <h1>📊 压测日志管理系统 <span class="badge">v0.1</span></h1>
+  <div>
+    <span id="stashInfo" style="font-size:12px;color:var(--text-muted);margin-right:12px;"></span>
+    <button class="btn btn-outline btn-sm" onclick="location.reload()">🔄 刷新</button>
+  </div>
+</header>
+
+<!-- Main Layout -->
+<div class="layout">
+
+  <!-- Left: Main content -->
+  <div class="main">
+
+    <!-- Stats -->
+    <div class="stats" id="stats">
+      <div class="stat"><div class="num" id="statTotal">0</div><div class="label">总条目</div></div>
+      <div class="stat"><div class="num" id="statProjects">0</div><div class="label">项目数</div></div>
+      <div class="stat"><div class="num" id="statTypes">0</div><div class="label">测试类型</div></div>
+      <div class="stat"><div class="num" id="statReviewed">0</div><div class="label">已审核</div></div>
+    </div>
+
+    <!-- Search -->
+    <div class="card" style="margin-bottom:16px;">
+      <div class="search-bar">
+        <input type="text" id="searchInput" placeholder="🔍 搜索关键词（支持中文）…" onkeydown="if(event.key==='Enter')doSearch()">
+        <select id="filterProject" onchange="doSearch()"><option value="">全部项目</option></select>
+        <select id="filterType" onchange="doSearch()"><option value="">全部类型</option></select>
+        <select id="filterStatus" onchange="doSearch()">
+          <option value="">全部状态</option>
+          <option value="planned">计划中</option>
+          <option value="in-progress">进行中</option>
+          <option value="completed">已完成</option>
+          <option value="reviewed">已审核</option>
+          <option value="archived">已归档</option>
+        </select>
+        <label style="display:flex;align-items:center;gap:4px;font-size:12px;white-space:nowrap;cursor:pointer;">
+          <input type="checkbox" id="fulltextToggle" onchange="doSearch()"> 全文
+        </label>
+      </div>
+    </div>
+
+    <!-- Entry List -->
+    <div class="card" id="entryList">
+      <div class="empty">输入关键词搜索，或点击右侧"添加记录"</div>
+    </div>
+
+    <div class="pagination" id="pagination"></div>
+  </div>
+
+  <!-- Right: Sidebar -->
+  <div class="sidebar">
+    <!-- Add Form -->
+    <div class="card">
+      <h3>📝 添加压测记录</h3>
+      <div class="form-group">
+        <label>测试标题 *</label>
+        <input type="text" id="addTitle" placeholder="如：WiFi 吞吐量测试-第3轮">
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label>项目 *</label>
+          <input type="text" id="addProject" placeholder="如：router-firmware-v2" list="projectList">
+          <datalist id="projectList"></datalist>
+        </div>
+        <div class="form-group">
+          <label>测试类型 *</label>
+          <select id="addType">
+            <option value="throughput">吞吐量</option>
+            <option value="latency">延迟</option>
+            <option value="stability">稳定性</option>
+            <option value="connection-drop">断连</option>
+            <option value="packet-loss">丢包</option>
+            <option value="bandwidth">带宽</option>
+            <option value="stress">压力</option>
+            <option value="regression">回归</option>
+            <option value="other">其他</option>
+          </select>
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label>测试人员</label>
+          <input type="text" id="addTester" placeholder="如：张三">
+        </div>
+        <div class="form-group">
+          <label>状态</label>
+          <select id="addStatus">
+            <option value="completed">已完成</option>
+            <option value="planned">计划中</option>
+            <option value="in-progress">进行中</option>
+            <option value="reviewed">已审核</option>
+            <option value="archived">已归档</option>
+          </select>
+        </div>
+      </div>
+      <div class="form-group">
+        <label>标签（逗号分隔）</label>
+        <input type="text" id="addTags" placeholder="如：wifi, regression, 夜间测试">
+      </div>
+      <div class="form-group">
+        <label>描述</label>
+        <textarea id="addDesc" placeholder="测试目的、环境、发现的问题…"></textarea>
+      </div>
+
+      <!-- File Upload -->
+      <div class="form-group">
+        <label>附件（日志/图片/PCAP）— 支持文件夹</label>
+        <div class="drop-zone" id="dropZone" onclick="document.getElementById('fileInput').click()">
+          <div class="dz-icon">📁</div>
+          <div>拖拽文件/文件夹到此处或点击上传</div>
+          <div style="font-size:11px;margin-top:4px;">支持 .log .txt .png .jpg .pcap .pcapng</div>
+        </div>
+        <div style="display:flex;gap:6px;margin-top:6px;">
+          <input type="file" id="fileInput" multiple style="display:none" onchange="handleFiles(this.files)">
+          <input type="file" id="folderInput" webkitdirectory multiple style="display:none" onchange="handleFiles(this.files)">
+          <button class="btn btn-outline btn-sm" style="flex:1;" onclick="event.stopPropagation();document.getElementById('fileInput').click()">📎 选择文件</button>
+          <button class="btn btn-outline btn-sm" style="flex:1;" onclick="event.stopPropagation();document.getElementById('folderInput').click()">📂 选择文件夹</button>
+        </div>
+        <div class="file-summary" id="fileSummary" style="display:none;"></div>
+        <div class="file-list-scroll" id="fileList"></div>
+        <label style="display:flex;align-items:center;gap:6px;margin-top:6px;font-size:12px;color:var(--text-muted);cursor:pointer;">
+          <input type="checkbox" id="cleanupCheck"> 入库成功后删除当前目录的原始文件（节省磁盘空间）
+        </label>
+      </div>
+
+      <button class="btn btn-primary" style="width:100%;" onclick="addEntry()" id="addBtn">
+        ✅ 添加记录
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- Detail Modal -->
+<div class="modal-overlay" id="modalOverlay" onclick="if(event.target===this)closeModal()">
+  <div class="modal">
+    <div class="modal-header">
+      <h2 id="modalTitle">条目详情</h2>
+      <button class="close-btn" onclick="closeModal()">✕</button>
+    </div>
+    <div class="modal-body" id="modalBody"></div>
+    <div class="modal-footer">
+      <button class="btn btn-outline btn-sm" onclick="editEntry()">✏️ 编辑</button>
+      <button class="btn btn-danger btn-sm" onclick="deleteEntryConfirm()">🗑 删除</button>
+      <button class="btn btn-outline btn-sm" onclick="closeModal()">关闭</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ========================================
+// State
+// ========================================
+let selectedFiles = [];
+let currentEntry = null;
+let currentPage = 0;
+const PAGE_SIZE = 30;
+
+// ========================================
+// Init
+// ========================================
+document.addEventListener('DOMContentLoaded', () => {
+  loadStats();
+  loadFilters();
+  doSearch();
+  setupDragDrop();
+});
+
+// ========================================
+// Stats
+// ========================================
+async function loadStats() {
+  try {
+    const r = await fetch('/api/stats');
+    const s = await r.json();
+    document.getElementById('statTotal').textContent = s.total || 0;
+    document.getElementById('statProjects').textContent = Object.keys(s.byProject || {}).length;
+    document.getElementById('statTypes').textContent = Object.keys(s.byTestType || {}).length;
+    document.getElementById('statReviewed').textContent = s.byStatus?.reviewed || 0;
+  } catch(e) { console.error(e); }
+}
+
+// ========================================
+// Load filter dropdowns
+// ========================================
+async function loadFilters() {
+  try {
+    const [projectsR, typesR] = await Promise.all([
+      fetch('/api/projects'),
+      fetch('/api/entries?limit=1000')
+    ]);
+    const projects = await projectsR.json();
+    const entriesData = await typesR.json();
+    const entries = entriesData.entries || [];
+
+    // Projects
+    const pSel = document.getElementById('filterProject');
+    for (const p of projects) {
+      pSel.innerHTML += `<option value="${p}">${p}</option>`;
+    }
+
+    // Types (from entries)
+    const types = [...new Set(entries.map(e => e.testType))].sort();
+    const tSel = document.getElementById('filterType');
+    for (const t of types) {
+      tSel.innerHTML += `<option value="${t}">${t}</option>`;
+    }
+
+    // Project datalist for add form
+    const dl = document.getElementById('projectList');
+    for (const p of projects) {
+      dl.innerHTML += `<option value="${p}">`;
+    }
+
+    document.getElementById('stashInfo').textContent = `${s.total || 0} 条记录`;
+  } catch(e) { console.error(e); }
+}
+
+// ========================================
+// Search
+// ========================================
+async function doSearch(page = 0) {
+  currentPage = page;
+  const q = document.getElementById('searchInput').value.trim();
+  const project = document.getElementById('filterProject').value;
+  const type = document.getElementById('filterType').value;
+  const status = document.getElementById('filterStatus').value;
+  const fulltext = document.getElementById('fulltextToggle').checked ? '1' : '0';
+
+  const params = new URLSearchParams({ limit: PAGE_SIZE, offset: page * PAGE_SIZE });
+  if (q) params.set('q', q);
+  if (project) params.set('project', project);
+  if (type) params.set('type', type);
+  if (status) params.set('status', status);
+  if (fulltext === '1') { params.set('fulltext', '1'); }
+
+  try {
+    const r = await fetch(`/api/entries?${params}`);
+    const data = await r.json();
+    const entries = data.entries || [];
+    renderEntries(entries, data.total || entries.length);
+  } catch(e) {
+    console.error(e);
+    document.getElementById('entryList').innerHTML = '<div class="empty">加载失败</div>';
+  }
+}
+
+function renderEntries(entries, total) {
+  const el = document.getElementById('entryList');
+
+  if (entries.length === 0) {
+    el.innerHTML = '<div class="empty">没有找到匹配的记录</div>';
+    document.getElementById('pagination').innerHTML = '';
+    return;
+  }
+
+  const statusNames = { planned:'计划中','in-progress':'进行中', completed:'已完成', reviewed:'已审核', archived:'已归档' };
+
+  let html = '';
+  for (const e of entries) {
+    const fileIcons = { log: '📄', image: '🖼️', pcap: '📡' };
+    const fileBadges = (e.fileTypes || []).map(t => fileIcons[t] || '📎').join(' ');
+    html += `
+      <div class="entry-item" onclick="openDetail('${e.id}')">
+        <div class="id">${e.id}</div>
+        <div class="title">${escHtml(e.title)}</div>
+        <div class="meta">
+          <span>📂 ${escHtml(e.project)}</span>
+          <span>${statusNames[e.status] || e.status}</span>
+          ${e.fileCount > 0 ? `<span>${fileBadges} ${e.fileCount}文件</span>` : ''}
+        </div>
+      </div>`;
+  }
+
+  el.innerHTML = html;
+
+  // Pagination
+  const totalPages = Math.ceil(total / PAGE_SIZE);
+  let pagHtml = '';
+  if (totalPages > 1) {
+    pagHtml += `<button class="btn btn-outline btn-sm" onclick="doSearch(${currentPage - 1})" ${currentPage === 0 ? 'disabled' : ''}>‹ 上一页</button>`;
+    pagHtml += `<span style="font-size:13px;color:var(--text-muted);padding:4px 12px;">${currentPage + 1} / ${totalPages}</span>`;
+    pagHtml += `<button class="btn btn-outline btn-sm" onclick="doSearch(${currentPage + 1})" ${currentPage >= totalPages - 1 ? 'disabled' : ''}>下一页 ›</button>`;
+  }
+  document.getElementById('pagination').innerHTML = pagHtml;
+}
+
+// ========================================
+// Detail Modal
+// ========================================
+async function openDetail(id) {
+  try {
+    const r = await fetch(`/api/entries/${id}`);
+    const e = await r.json();
+    if (e.error) { toast(e.error, 'error'); return; }
+    currentEntry = e;
+    renderDetail(e);
+    document.getElementById('modalOverlay').classList.add('active');
+  } catch(err) {
+    toast('加载失败', 'error');
+  }
+}
+
+function renderDetail(e) {
+  document.getElementById('modalTitle').textContent = `${e.id}: ${e.title}`;
+  const statusNames = { planned:'计划中','in-progress':'进行中', completed:'已完成', reviewed:'已审核', archived:'已归档' };
+
+  let html = `
+    <table style="width:100%;border-collapse:collapse;">
+      <tr><td style="color:var(--text-muted);width:80px;padding:4px 0;">项目</td><td>${escHtml(e.project)}</td></tr>
+      <tr><td style="color:var(--text-muted);">类型</td><td>${escHtml(e.testType)}</td></tr>
+      <tr><td style="color:var(--text-muted);">人员</td><td>${escHtml(e.tester || '-')}</td></tr>
+      <tr><td style="color:var(--text-muted);">状态</td><td>${statusNames[e.status] || e.status}</td></tr>
+      <tr><td style="color:var(--text-muted);">标签</td><td>${(e.tags || []).map(t => `<span class="tag">${escHtml(t)}</span>`).join(' ')}</td></tr>
+    </table>
+  `;
+
+  if (e.description) {
+    html += `<div style="margin-top:16px;"><strong style="font-size:13px;color:var(--text-muted);">描述</strong><p style="margin-top:4px;white-space:pre-wrap;">${escHtml(e.description)}</p></div>`;
+  }
+
+  if (e.environment && Object.keys(e.environment).length > 0) {
+    html += `<div style="margin-top:12px;"><strong style="font-size:13px;color:var(--text-muted);">环境参数</strong>`;
+    for (const [k, v] of Object.entries(e.environment)) {
+      html += `<div style="font-size:13px;margin-top:2px;">  <code>${escHtml(k)}</code>: ${escHtml(String(v))}</div>`;
+    }
+    html += `</div>`;
+  }
+
+  if (e.results && Object.keys(e.results).length > 0) {
+    html += `<div style="margin-top:12px;"><strong style="font-size:13px;color:var(--text-muted);">测试结果</strong>`;
+    for (const [k, v] of Object.entries(e.results)) {
+      html += `<div style="font-size:13px;margin-top:2px;">  <code>${escHtml(k)}</code>: <strong>${escHtml(String(v))}</strong></div>`;
+    }
+    html += `</div>`;
+  }
+
+  if (e.files && e.files.length > 0) {
+    html += `<div style="margin-top:12px;"><strong style="font-size:13px;color:var(--text-muted);">附件 (${e.files.length})</strong>`;
+
+    // 按目录分组
+    const groups = {};
+    for (const f of e.files) {
+      const dir = f.path.replace(/^files[\/\\]?/, '').replace(/[\/\\][^\/\\]*$/, '') || '(根目录)';
+      if (!groups[dir]) groups[dir] = [];
+      groups[dir].push(f);
+    }
+
+    for (const [dir, files] of Object.entries(groups)) {
+      const dirId = 'dir_' + e.id + '_' + dir.replace(/[^a-zA-Z0-9一-鿿]/g, '_');
+      const isKeyDir = files.some(f => f.key);
+      const dirBg = isKeyDir ? 'background:#fffbeb;' : '';
+      html += `<div style="margin-top:6px;${dirBg}">
+        <div style="font-size:12px;color:var(--text-muted);font-weight:600;padding:4px 6px;cursor:pointer;border-radius:4px;user-select:none;"
+             onclick="const el=document.getElementById('${dirId}');const arrow=this.querySelector('.arrow');if(el.style.display==='none'){el.style.display='block';arrow.textContent='▼'}else{el.style.display='none';arrow.textContent='▶'}">
+          <span class="arrow">▶</span> ${escHtml(dir)} <span style="font-weight:400;">(${files.length} 个)</span>
+          ${isKeyDir ? ' ⭐' : ''}
+        </div>
+        <div id="${dirId}" style="display:none;margin-left:8px;border-left:2px solid var(--border);padding-left:8px;">`;
+      for (const f of files) {
+        const sizeFmt = f.size > 1024*1024 ? (f.size/1024/1024).toFixed(1)+' MB' : (f.size/1024).toFixed(1)+' KB';
+        const starIcon = f.key ? '⭐' : '☆';
+        const keyBg = f.key ? 'background:#fffbeb;padding:2px 8px;border-radius:4px;' : '';
+        html += `<div style="font-size:13px;margin:2px 0;${keyBg}">
+          <span style="cursor:pointer;" onclick="toggleKeyFile('${escHtml(e.id)}','${escHtml(f.name)}')" title="标记为关键文件">${starIcon}</span>
+          <a href="/api/entries/${e.id}/files/${encodeURIComponent(f.name)}" target="_blank" style="color:var(--primary);margin-left:4px;">${escHtml(f.name)}</a>
+          <span style="color:var(--text-muted);">[${f.type}] ${sizeFmt}</span>
+          ${f.key ? '<span style="font-size:11px;color:#f59e0b;">关键文件</span>' : ''}
+        </div>`;
+      }
+      html += `</div></div>`;
+    }
+    html += `</div>`;
+  }
+
+  if (e.relatedEntries && e.relatedEntries.length > 0) {
+    html += `<div style="margin-top:12px;"><strong style="font-size:13px;color:var(--text-muted);">关联条目</strong><div>${e.relatedEntries.map(id => `<span class="tag" style="cursor:pointer;" onclick="openDetail('${escHtml(id)}')">${escHtml(id)}</span>`).join(' ')}</div></div>`;
+  }
+
+  document.getElementById('modalBody').innerHTML = html;
+}
+
+function closeModal() {
+  document.getElementById('modalOverlay').classList.remove('active');
+  currentEntry = null;
+}
+
+// ========================================
+// Edit — 完整表单编辑
+// ========================================
+function editEntry() {
+  if (!currentEntry) return;
+  const e = currentEntry;
+  const statusNames = { planned: '计划中', 'in-progress': '进行中', completed: '已完成', reviewed: '已审核', archived: '已归档' };
+
+  const html = `
+    <div class="form-group"><label>标题</label><input type="text" id="editTitle" value="${escHtml(e.title)}"></div>
+    <div class="form-row">
+      <div class="form-group"><label>项目</label><input type="text" id="editProject" value="${escHtml(e.project)}"></div>
+      <div class="form-group"><label>测试类型</label><select id="editType">
+        ${['throughput','latency','stability','connection-drop','packet-loss','bandwidth','stress','regression','other'].map(t => `<option value="${t}" ${e.testType===t?'selected':''}>${t}</option>`).join('')}
+      </select></div>
+    </div>
+    <div class="form-row">
+      <div class="form-group"><label>测试人员</label><input type="text" id="editTester" value="${escHtml(e.tester||'')}"></div>
+      <div class="form-group"><label>状态</label><select id="editStatus">
+        ${Object.entries(statusNames).map(([k,v]) => `<option value="${k}" ${e.status===k?'selected':''}>${v}</option>`).join('')}
+      </select></div>
+    </div>
+    <div class="form-group"><label>标签（逗号分隔）</label><input type="text" id="editTags" value="${escHtml((e.tags||[]).join(', '))}"></div>
+    <div class="form-group"><label>描述</label><textarea id="editDesc" rows="4">${escHtml(e.description||'')}</textarea></div>
+    <div style="display:flex;gap:8px;margin-top:12px;">
+      <button class="btn btn-primary btn-sm" onclick="saveEdit()">保存</button>
+      <button class="btn btn-outline btn-sm" onclick="openDetail('${escHtml(e.id)}')">取消</button>
+    </div>`;
+
+  document.getElementById('modalBody').innerHTML = html;
+  document.getElementById('modalTitle').textContent = '编辑: ' + e.id;
+}
+
+async function saveEdit() {
+  if (!currentEntry) return;
+  const body = {
+    title: document.getElementById('editTitle').value.trim(),
+    project: document.getElementById('editProject').value.trim(),
+    testType: document.getElementById('editType').value,
+    tester: document.getElementById('editTester').value.trim(),
+    status: document.getElementById('editStatus').value,
+    tags: document.getElementById('editTags').value.split(',').map(t => t.trim()).filter(Boolean),
+    description: document.getElementById('editDesc').value.trim(),
+  };
+
+  try {
+    const r = await fetch('/api/entries/' + currentEntry.id, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+    });
+    if (!r.ok) { const err = await r.json(); toast(err.error, 'error'); return; }
+    toast('已保存', 'success');
+    const r2 = await fetch('/api/entries/' + currentEntry.id);
+    currentEntry = await r2.json();
+    renderDetail(currentEntry);
+    document.getElementById('modalTitle').textContent = currentEntry.id + ': ' + currentEntry.title;
+    doSearch(currentPage);
+    loadStats();
+  } catch(err) { toast('保存失败', 'error'); }
+}
+
+async function deleteEntryConfirm() {
+  if (!currentEntry) return;
+  if (!confirm(`确认删除 ${currentEntry.id}?\n\n"${currentEntry.title}"\n\n此操作不可逆，将删除所有附件！`)) return;
+
+  try {
+    const r = await fetch(`/api/entries/${currentEntry.id}`, { method: 'DELETE' });
+    if (!r.ok) { const err = await r.json(); toast(err.error, 'error'); return; }
+    toast('已删除', 'success');
+    closeModal();
+    doSearch(currentPage);
+    loadStats();
+  } catch(err) {
+    toast('删除失败', 'error');
+  }
+}
+
+// ========================================
+// Add Entry
+// ========================================
+async function addEntry() {
+  const title = document.getElementById('addTitle').value.trim();
+  const project = document.getElementById('addProject').value.trim();
+  const type = document.getElementById('addType').value;
+
+  if (!title) { toast('请输入标题', 'error'); return; }
+  if (!project) { toast('请输入项目名称', 'error'); return; }
+
+  const btn = document.getElementById('addBtn');
+  btn.disabled = true;
+  btn.textContent = '⏳ 上传中…';
+
+  const form = new FormData();
+  form.append('title', title);
+  form.append('project', project);
+  form.append('testType', type);
+  form.append('tester', document.getElementById('addTester').value.trim());
+  form.append('status', document.getElementById('addStatus').value);
+  form.append('tags', document.getElementById('addTags').value.trim());
+  form.append('description', document.getElementById('addDesc').value.trim());
+
+  // 收集文件 + 相对路径（文件夹上传时保留目录结构）
+  const relativePaths = [];
+  for (const f of selectedFiles) {
+    form.append('files', f);
+    // webkitRelativePath 仅在文件夹上传时存在
+    const relDir = f.webkitRelativePath
+      ? f.webkitRelativePath.split('/').slice(0, -1).join('/')
+      : '';
+    relativePaths.push(relDir);
+  }
+  form.append('relativePaths', JSON.stringify(relativePaths));
+  // 入库后清理原始文件
+  form.append('cleanupOriginals', document.getElementById('cleanupCheck').checked ? '1' : '0');
+
+  try {
+    const r = await fetch('/api/entries', { method: 'POST', body: form });
+    if (!r.ok) { const err = await r.json(); toast(err.error, 'error'); return; }
+    const entry = await r.json();
+    let msg = `已创建: ${entry.id}`;
+    if (entry._cleaned && entry._cleaned.length > 0) {
+      msg += ` | 已清理 ${entry._cleaned.length} 个原始文件`;
+    }
+    toast(msg, 'success');
+
+    // Reset form
+    document.getElementById('addTitle').value = '';
+    document.getElementById('addTester').value = '';
+    document.getElementById('addTags').value = '';
+    document.getElementById('addDesc').value = '';
+    selectedFiles = [];
+    renderFileList();
+
+    doSearch(0);
+    loadStats();
+  } catch(err) {
+    toast('创建失败', 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '✅ 添加记录';
+  }
+}
+
+// ========================================
+// File handling
+// ========================================
+function setupDragDrop() {
+  const dz = document.getElementById('dropZone');
+  dz.addEventListener('dragover', e => { e.preventDefault(); dz.classList.add('dragover'); });
+  dz.addEventListener('dragleave', () => dz.classList.remove('dragover'));
+  dz.addEventListener('drop', e => {
+    e.preventDefault();
+    dz.classList.remove('dragover');
+    if (e.dataTransfer.files.length > 0) {
+      addFiles(e.dataTransfer.files);
+    }
+  });
+}
+
+function handleFiles(fileList) {
+  addFiles(fileList);
+  document.getElementById('fileInput').value = '';
+}
+
+function addFiles(fileList) {
+  for (const f of fileList) {
+    selectedFiles.push(f);
+  }
+  renderFileList();
+}
+
+function removeFile(index) {
+  selectedFiles.splice(index, 1);
+  renderFileList();
+}
+
+function renderFileList() {
+  const el = document.getElementById('fileList');
+  const summary = document.getElementById('fileSummary');
+  const totalSize = selectedFiles.reduce((s, f) => s + f.size, 0);
+  const sizeFmt = totalSize > 1024*1024 ? (totalSize/1024/1024).toFixed(1)+' MB' : (totalSize/1024).toFixed(1)+' KB';
+
+  if (selectedFiles.length === 0) {
+    el.innerHTML = '';
+    summary.style.display = 'none';
+    return;
+  }
+
+  // 摘要行
+  summary.style.display = 'block';
+  summary.innerHTML = `📦 ${selectedFiles.length} 个文件 (共 ${sizeFmt}) — <span style="color:var(--danger);" onclick="selectedFiles=[];renderFileList();">清空全部</span>`;
+
+  // 滚动列表（只显示前 100 个，超过的提示）
+  const show = selectedFiles.slice(0, 100);
+  el.innerHTML = show.map((f, i) => {
+    const path = f.webkitRelativePath || f.name;
+    return `<span class="file-tag" title="${escHtml(path)}">📎 ${escHtml(path)} <span class="remove" onclick="removeFile(${i})">✕</span></span>`;
+  }).join('');
+  if (selectedFiles.length > 100) {
+    el.innerHTML += `<div style="font-size:11px;color:var(--text-muted);padding:4px;">... 还有 ${selectedFiles.length - 100} 个文件未显示</div>`;
+  }
+}
+
+// ========================================
+// Utilities
+// ========================================
+function escHtml(s) {
+  if (!s) return '';
+  const d = document.createElement('div');
+  d.textContent = s;
+  return d.innerHTML;
+}
+
+async function toggleKeyFile(entryId, filename) {
+  try {
+    const r = await fetch(`/api/entries/${encodeURIComponent(entryId)}/files/${encodeURIComponent(filename)}/key`, { method: 'PATCH' });
+    if (!r.ok) { toast('操作失败', 'error'); return; }
+    const result = await r.json();
+    toast(result.key ? `⭐ 已标记: ${filename}` : `已取消标记: ${filename}`, 'success');
+    // 刷新详情
+    openDetail(entryId);
+  } catch(err) { toast('操作失败', 'error'); }
+}
+
+function toast(msg, type = 'success') {
+  const t = document.createElement('div');
+  t.className = `toast ${type}`;
+  t.textContent = msg;
+  document.body.appendChild(t);
+  setTimeout(() => t.remove(), 3000);
+}
+</script>
+
+</body>
+</html>

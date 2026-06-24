@@ -1,0 +1,38 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# === 运行时数据（不提交，每个 stash 实例独立） ===
+entries/
+.logstash/
+test-stash/
+
+# Log files
+*.log
+
+# Large binary artifacts — these should be tracked via Git LFS
+*.pcap
+*.pcapng
+*.png
+*.jpg
+*.jpeg
+*.bmp
+*.gif
+*.zip
+*.tar.gz
+*.7z
+
+# Upload temp files
+uploads/
