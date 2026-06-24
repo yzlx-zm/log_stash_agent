@@ -90,15 +90,13 @@ export function validateEntry(entry: unknown): ValidationResult {
 
   const e = entry as Record<string, unknown>;
 
-  // 必填字符串字段
+  // 必填字符串字段（description 和 tester 可以为空）
   const requiredStrings: [string, string][] = [
     ["id", "id"],
     ["title", "title"],
     ["project", "project"],
     ["testType", "testType"],
-    ["tester", "tester"],
     ["timestamp", "timestamp"],
-    ["description", "description"],
     ["createdAt", "createdAt"],
     ["updatedAt", "updatedAt"],
   ];
