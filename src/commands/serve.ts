@@ -508,22 +508,95 @@ export function serveCommand(program: Command): void {
         }
       });
 
-      // PUT /api/entries/:id/notes — 保存分析笔记
-      app.put("/api/entries/:id/notes", async (req, res) => {
+      // ==========================================
+      // 分析笔记 — 多条独立记录
+      // ==========================================
+
+      // GET /api/entries/:id/notes — 列出所有笔记
+      app.get("/api/entries/:id/notes", async (req, res) => {
         try {
           const entry = await readEntry(stashRoot, req.params.id);
-          if (!entry) {
-            res.status(404).json({ error: "条目不存在" });
-            return;
-          }
-          const { notes } = req.body;
-          if (typeof notes !== "string") {
-            res.status(400).json({ error: "notes 必须是字符串" });
-            return;
-          }
+          if (!entry) { res.status(404).json({ error: "条目不存在" }); return; }
+          const { readdir: rd, stat: fsStat, readFile: rf } = await import("node:fs/promises");
+          const notesDir = resolve(stashRoot, "entries", req.params.id, "notes");
+          const notes: any[] = [];
+          try {
+            const files = await rd(notesDir);
+            for (const f of files) {
+              if (!f.endsWith(".md")) continue;
+              const fp = resolve(notesDir, f);
+              const s = await fsStat(fp);
+              // 解析: YYYYMMDD_HHmmss_title.md
+              const match = f.match(/^(\d{8})_(\d{6})_(.+)\.md$/);
+              notes.push({
+                file: f,
+                title: match ? match[3].replace(/_/g, " ") : f.replace(".md", ""),
+                date: match ? `${match[1].slice(0,4)}-${match[1].slice(4,6)}-${match[1].slice(6,8)} ${match[2].slice(0,2)}:${match[2].slice(2,4)}:${match[2].slice(4,6)}` : "",
+                size: s.size,
+                updatedAt: s.mtime.toISOString(),
+              });
+            }
+            notes.sort((a, b) => b.file.localeCompare(a.file)); // 最新的在前
+          } catch { /* 目录不存在 */ }
+          res.json(notes);
+        } catch (err: any) {
+          console.error("[API Error]", err instanceof Error ? err.message : String(err));
+          res.status(500).json({ error: "服务器内部错误" });
+        }
+      });
+
+      // POST /api/entries/:id/notes — 新建笔记
+      app.post("/api/entries/:id/notes", async (req, res) => {
+        try {
+          const entry = await readEntry(stashRoot, req.params.id);
+          if (!entry) { res.status(404).json({ error: "条目不存在" }); return; }
+          const { title, content } = req.body;
+          if (!title) { res.status(400).json({ error: "标题不能为空" }); return; }
+          const { mkdir, writeFile } = await import("node:fs/promises");
+          const notesDir = resolve(stashRoot, "entries", req.params.id, "notes");
+          await mkdir(notesDir, { recursive: true });
+          // 文件名: YYYYMMDD_HHmmss_safeTitle.md
+          const now = new Date();
+          const ts = now.getFullYear()
+            + String(now.getMonth()+1).padStart(2,"0")
+            + String(now.getDate()).padStart(2,"0")
+            + "_" + String(now.getHours()).padStart(2,"0")
+            + String(now.getMinutes()).padStart(2,"0")
+            + String(now.getSeconds()).padStart(2,"0");
+          const safeTitle = (title as string).replace(/[\/\\:*?"<>|]/g, "_").replace(/\s+/g, "_").slice(0, 50);
+          const fileName = `${ts}_${safeTitle}.md`;
+          const filePath = resolve(notesDir, fileName);
+          await writeFile(filePath, content || "", "utf-8");
+          res.status(201).json({ file: fileName, title, content: content || "", date: ts });
+        } catch (err: any) {
+          console.error("[API Error]", err instanceof Error ? err.message : String(err));
+          res.status(500).json({ error: "服务器内部错误" });
+        }
+      });
+
+      // GET /api/entries/:id/notes/:noteFile — 读取单条笔记
+      app.get("/api/entries/:id/notes/:noteFile", async (req, res) => {
+        try {
+          const fp = resolve(stashRoot, "entries", req.params.id, "notes", req.params.noteFile);
+          const { readFile: rf } = await import("node:fs/promises");
+          try {
+            const content = await rf(fp, "utf-8");
+            res.json({ file: req.params.noteFile, content });
+          } catch { res.status(404).json({ error: "笔记不存在" }); }
+        } catch (err: any) {
+          console.error("[API Error]", err instanceof Error ? err.message : String(err));
+          res.status(500).json({ error: "服务器内部错误" });
+        }
+      });
+
+      // PUT /api/entries/:id/notes/:noteFile — 更新笔记
+      app.put("/api/entries/:id/notes/:noteFile", async (req, res) => {
+        try {
+          const { content } = req.body;
+          if (typeof content !== "string") { res.status(400).json({ error: "content 必须是字符串" }); return; }
           const { writeFile } = await import("node:fs/promises");
-          const notesPath = resolve(stashRoot, "entries", req.params.id, "notes.md");
-          await writeFile(notesPath, notes, "utf-8");
+          const fp = resolve(stashRoot, "entries", req.params.id, "notes", req.params.noteFile);
+          await writeFile(fp, content, "utf-8");
           res.json({ saved: true });
         } catch (err: any) {
           console.error("[API Error]", err instanceof Error ? err.message : String(err));
@@ -531,22 +604,13 @@ export function serveCommand(program: Command): void {
         }
       });
 
-      // GET /api/entries/:id/notes — 读取分析笔记
-      app.get("/api/entries/:id/notes", async (req, res) => {
+      // DELETE /api/entries/:id/notes/:noteFile — 删除笔记
+      app.delete("/api/entries/:id/notes/:noteFile", async (req, res) => {
         try {
-          const entry = await readEntry(stashRoot, req.params.id);
-          if (!entry) {
-            res.status(404).json({ error: "条目不存在" });
-            return;
-          }
-          const { readFile: rf } = await import("node:fs/promises");
-          const notesPath = resolve(stashRoot, "entries", req.params.id, "notes.md");
-          try {
-            const content = await rf(notesPath, "utf-8");
-            res.json({ notes: content });
-          } catch {
-            res.json({ notes: "" });
-          }
+          const { unlink } = await import("node:fs/promises");
+          const fp = resolve(stashRoot, "entries", req.params.id, "notes", req.params.noteFile);
+          await unlink(fp);
+          res.json({ deleted: true });
         } catch (err: any) {
           console.error("[API Error]", err instanceof Error ? err.message : String(err));
           res.status(500).json({ error: "服务器内部错误" });

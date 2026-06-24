@@ -353,6 +353,25 @@
   </div>
 </div>
 
+<!-- Note Edit Modal -->
+<div class="modal-overlay" id="noteModalOverlay" onclick="if(event.target===this)closeNoteModal()">
+  <div class="modal" style="width:600px;">
+    <div class="modal-header">
+      <h2 id="noteModalTitle">编辑笔记</h2>
+      <button class="close-btn" onclick="closeNoteModal()">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-group"><label>笔记标题</label><input type="text" id="noteTitleInput" placeholder="如：初步分析、深入排查、最终结论"></div>
+      <div class="form-group"><label>内容 (Markdown)</label><textarea id="noteContentInput" rows="12" style="width:100%;border:1px solid var(--border);border-radius:8px;padding:8px;font-size:13px;font-family:inherit;resize:vertical;"></textarea></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-primary btn-sm" onclick="saveNoteModal()">💾 保存</button>
+      <button class="btn btn-danger btn-sm" onclick="deleteNoteModal()" id="deleteNoteBtn" style="display:none;">🗑 删除</button>
+      <button class="btn btn-outline btn-sm" onclick="closeNoteModal()">关闭</button>
+    </div>
+  </div>
+</div>
+
 <script>
 // ========================================
 // State
@@ -504,17 +523,9 @@ function renderEntries(entries, total) {
 // ========================================
 // Detail Modal
 // ========================================
-// 当前正在查看的条目 ID，用于切换时自动保存
 let currentEntryId = null;
 
 async function openDetail(id) {
-  // 切换条目前，先自动保存上一个条目的笔记
-  if (currentEntryId && currentEntryId !== id) {
-    const editor = document.getElementById('notesEditor');
-    if (editor && editor.dataset.dirty === '1') {
-      await saveNotesSilent(currentEntryId);
-    }
-  }
   currentEntryId = id;
 
   try {
@@ -605,33 +616,22 @@ function renderDetail(e) {
     html += `<div style="margin-top:12px;"><strong style="font-size:13px;color:var(--text-muted);">关联条目</strong><div>${e.relatedEntries.map(id => `<span class="tag" style="cursor:pointer;" onclick="openDetail('${escHtml(id)}')">${escHtml(id)}</span>`).join(' ')}</div></div>`;
   }
 
-  // 分析笔记区域
+  // 分析笔记区域 — 多条独立记录
   html += `<div style="margin-top:16px;border-top:1px solid var(--border);padding-top:12px;">
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
       <strong style="font-size:13px;color:var(--text-muted);">📝 分析记录</strong>
-      <button class="btn btn-outline btn-xs" onclick="loadNotes('${escHtml(e.id)}')">加载笔记</button>
+      <button class="btn btn-primary btn-xs" onclick="newNote('${escHtml(e.id)}')">＋ 新建笔记</button>
     </div>
-    <textarea id="notesEditor" placeholder="在此编写测试分析、问题总结、结论…（切换条目自动保存）" style="width:100%;min-height:80px;border:1px solid var(--border);border-radius:8px;padding:8px;font-size:13px;font-family:inherit;resize:vertical;"></textarea>
-    <div style="display:flex;gap:6px;margin-top:6px;">
-      <button class="btn btn-primary btn-xs" onclick="saveNotes('${escHtml(e.id)}')">💾 保存笔记</button>
-      <span id="notesStatus" style="font-size:11px;color:var(--text-muted);"></span>
-    </div>
+    <div id="notesList" style="max-height:200px;overflow-y:auto;">加载中...</div>
   </div>`;
 
   document.getElementById('modalBody').innerHTML = html;
 
-  // 自动加载已有笔记
-  loadNotes(e.id);
+  // 加载笔记列表
+  loadNotesList(e.id);
 }
 
-async function closeModal() {
-  // 关闭前自动保存笔记
-  if (currentEntryId) {
-    const editor = document.getElementById('notesEditor');
-    if (editor && editor.dataset.dirty === '1') {
-      await saveNotesSilent(currentEntryId);
-    }
-  }
+function closeModal() {
   document.getElementById('modalOverlay').classList.remove('active');
   currentEntry = null;
   currentEntryId = null;
@@ -850,38 +850,114 @@ function escHtml(s) {
 }
 
 // ========================================
-// Notes (analysis record)
+// Notes — 多条独立分析记录
 // ========================================
-async function loadNotes(entryId) {
+let currentNoteEntryId = null;
+let currentNoteFile = null;
+
+async function loadNotesList(entryId) {
+  const el = document.getElementById('notesList');
+  if (!el) return;
   try {
     const r = await fetch('/api/entries/' + entryId + '/notes');
-    const d = await r.json();
-    const editor = document.getElementById('notesEditor');
-    if (editor) {
-      editor.value = d.notes || '';
-      editor.dataset.dirty = '0'; // 刚加载，未修改
-      editor.oninput = () => { editor.dataset.dirty = '1'; };
+    const notes = await r.json();
+    if (notes.length === 0) {
+      el.innerHTML = '<div style="font-size:12px;color:var(--text-muted);padding:8px;">暂无分析记录，点击「＋ 新建笔记」</div>';
+      return;
     }
-  } catch(e) { /* ignore */ }
+    el.innerHTML = notes.map(n => {
+      const preview = (n.content || '').slice(0, 80).replace(/\n/g, ' ');
+      return `<div style="display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:6px;cursor:pointer;margin:2px 0;"
+            onclick="openNote('${entryId}','${escHtml(n.file)}')" onmouseover="this.style.background='#f8fafc'" onmouseout="this.style.background=''">
+        <span>📝</span>
+        <div style="flex:1;min-width:0;">
+          <div style="font-size:13px;font-weight:500;">${escHtml(n.title)}</div>
+          <div style="font-size:11px;color:var(--text-muted);">${n.date} · ${preview || '空'}</div>
+        </div>
+      </div>`;
+    }).join('');
+  } catch(e) { el.innerHTML = '<div style="font-size:12px;color:var(--danger);">加载失败</div>'; }
 }
 
-async function saveNotes(entryId) {
-  await saveNotesSilent(entryId);
-  const status = document.getElementById('notesStatus');
-  if (status) { status.textContent = '✓ 已保存'; setTimeout(() => status.textContent = '', 2000); }
+function newNote(entryId) {
+  currentNoteEntryId = entryId;
+  currentNoteFile = null;
+  document.getElementById('noteModalTitle').textContent = '新建笔记 — ' + entryId;
+  document.getElementById('noteTitleInput').value = '';
+  document.getElementById('noteContentInput').value = '';
+  document.getElementById('deleteNoteBtn').style.display = 'none';
+  document.getElementById('noteModalOverlay').classList.add('active');
 }
 
-async function saveNotesSilent(entryId) {
-  const editor = document.getElementById('notesEditor');
-  if (!editor) return;
+async function openNote(entryId, noteFile) {
+  currentNoteEntryId = entryId;
+  currentNoteFile = noteFile;
+  document.getElementById('noteModalTitle').textContent = '编辑笔记 — ' + entryId;
+  document.getElementById('deleteNoteBtn').style.display = 'inline-flex';
   try {
-    await fetch('/api/entries/' + entryId + '/notes', {
-      method: 'PUT', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ notes: editor.value })
-    });
-    editor.dataset.dirty = '0';
-  } catch(e) { /* silent fail for auto-save */ }
+    const r = await fetch('/api/entries/' + entryId + '/notes/' + encodeURIComponent(noteFile));
+    const d = await r.json();
+    // 从文件名解析标题
+    const match = noteFile.match(/^\d{8}_\d{6}_(.+)\.md$/);
+    document.getElementById('noteTitleInput').value = match ? match[1].replace(/_/g, ' ') : '';
+    document.getElementById('noteContentInput').value = d.content || '';
+  } catch(e) { toast('加载笔记失败', 'error'); return; }
+  document.getElementById('noteModalOverlay').classList.add('active');
 }
+
+async function saveNoteModal() {
+  const title = document.getElementById('noteTitleInput').value.trim();
+  const content = document.getElementById('noteContentInput').value;
+  if (!title) { toast('请输入标题', 'error'); return; }
+
+  if (currentNoteFile) {
+    // 更新已有笔记（内容）
+    try {
+      await fetch('/api/entries/' + currentNoteEntryId + '/notes/' + encodeURIComponent(currentNoteFile), {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content })
+      });
+      toast('已保存', 'success');
+      closeNoteModal();
+    } catch(e) { toast('保存失败', 'error'); }
+  } else {
+    // 新建笔记
+    try {
+      const r = await fetch('/api/entries/' + currentNoteEntryId + '/notes', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title, content })
+      });
+      if (!r.ok) { const err = await r.json(); toast(err.error, 'error'); return; }
+      toast('笔记已创建', 'success');
+      closeNoteModal();
+      loadNotesList(currentNoteEntryId);
+    } catch(e) { toast('创建失败', 'error'); }
+  }
+}
+
+async function deleteNoteModal() {
+  if (!currentNoteFile) return;
+  if (!confirm('确认删除这条笔记？此操作不可逆。')) return;
+  try {
+    await fetch('/api/entries/' + currentNoteEntryId + '/notes/' + encodeURIComponent(currentNoteFile), { method: 'DELETE' });
+    toast('已删除', 'success');
+    closeNoteModal();
+    loadNotesList(currentNoteEntryId);
+  } catch(e) { toast('删除失败', 'error'); }
+}
+
+function closeNoteModal() {
+  document.getElementById('noteModalOverlay').classList.remove('active');
+  currentNoteFile = null;
+
+  // 刷新父弹窗的笔记列表
+  if (currentEntry && currentEntry.id) {
+    loadNotesList(currentEntry.id);
+  }
+}
+
+// Remove old auto-save logic (no longer needed with multi-note system)
+async function saveNotesSilent(_entryId) { /* deprecated */ }
 
 // ========================================
 // Cleanup original files
@@ -918,51 +994,47 @@ async function analyzeEntry() {
     const r = await fetch('/api/entries/' + currentEntry.id + '/analyze', { method: 'POST' });
     const data = await r.json();
 
-    // 把分析数据展示出来，并填充 prompt 到笔记编辑器
-    let summary = '# AI 分析结果\n\n';
-    summary += '> 请将以下内容发送给 AI 助手进行分析，或手动填写分析结论。\n\n';
-    summary += '## 测试概要\n';
-    summary += '- 项目: ' + (data.project || '') + '\n';
-    summary += '- 测试类型: ' + (data.testType || '') + '\n';
-    summary += '- 测试人员: ' + (data.tester || '') + '\n';
-    summary += '- 状态: ' + (data.status || '') + '\n\n';
+    // 构建笔记内容
+    let content = '# AI 分析结果\n\n';
+    content += '> 请补充分析结论\n\n';
+    content += '## 测试概要\n';
+    content += '- 项目: ' + (data.project || '') + '\n';
+    content += '- 测试类型: ' + (data.testType || '') + '\n';
+    content += '- 测试人员: ' + (data.tester || '') + '\n';
+    content += '- 状态: ' + (data.status || '') + '\n\n';
 
     if (data.description) {
-      summary += '## 测试描述\n' + data.description + '\n\n';
+      content += '## 测试描述\n' + data.description + '\n\n';
     }
     if (data.environment && Object.keys(data.environment).length > 0) {
-      summary += '## 环境参数\n';
+      content += '## 环境参数\n';
       for (const [k, v] of Object.entries(data.environment)) {
-        summary += '- ' + k + ': ' + v + '\n';
+        content += '- ' + k + ': ' + v + '\n';
       }
-      summary += '\n';
+      content += '\n';
     }
     if (data.results && Object.keys(data.results).length > 0) {
-      summary += '## 测试结果\n';
+      content += '## 测试结果\n';
       for (const [k, v] of Object.entries(data.results)) {
-        summary += '- ' + k + ': ' + v + '\n';
+        content += '- ' + k + ': ' + v + '\n';
       }
-      summary += '\n';
+      content += '\n';
     }
-    summary += '## 结论\n';
-    summary += '1. **测试结论**: \n';
-    summary += '2. **关键发现**: \n';
-    summary += '3. **风险与建议**: \n';
-    summary += '4. **一句话总结**: \n';
+    content += '## 结论\n';
+    content += '1. **测试结论**: \n';
+    content += '2. **关键发现**: \n';
+    content += '3. **风险与建议**: \n';
+    content += '4. **一句话总结**: \n';
 
-    // 填入笔记编辑器
-    const editor = document.getElementById('notesEditor');
-    if (editor) {
-      // 如果已有笔记则追加，否则替换
-      if (editor.value.trim() && editor.value.trim() !== summary.trim()) {
-        editor.value = editor.value + '\n\n---\n\n' + summary;
-      } else {
-        editor.value = summary;
-      }
-    }
+    // 创建一条新笔记
+    await fetch('/api/entries/' + currentEntry.id + '/notes', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title: 'AI 分析模板', content })
+    });
 
     btn.disabled = false; btn.textContent = '🤖 AI 分析';
-    toast('分析模板已生成，请补充结论后保存', 'success');
+    toast('分析模板已创建为新笔记，点击编辑补充结论', 'success');
+    loadNotesList(currentEntry.id);
   } catch(e) {
     btn.disabled = false; btn.textContent = '🤖 AI 分析';
     toast('分析失败', 'error');
