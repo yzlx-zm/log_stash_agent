@@ -433,8 +433,8 @@ export function serveCommand(program: Command): void {
             return;
           }
 
-          // 安全检查：拒绝包含路径遍历序列的 file.path
-          if (file.path.includes("..") || file.path.includes("/") || file.path.includes("\\")) {
+          // 安全检查：拒绝路径遍历序列
+          if (file.path.includes("..")) {
             res.status(400).json({ error: "文件路径无效" });
             return;
           }
