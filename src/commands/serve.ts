@@ -142,6 +142,8 @@ export function serveCommand(program: Command): void {
         ".zip", ".tar", ".tar.gz", ".tar.bz2", ".tar.xz", ".gz", ".bz2", ".xz", ".7z",
         // 二进制/固件
         ".bin", ".hex", ".elf", ".img",
+        // 其他
+        ".cubx",
         // 数据库
         ".db", ".sqlite", ".sqlite3",
       ];
@@ -316,6 +318,7 @@ export function serveCommand(program: Command): void {
             results,
             files: filePaths,
             fileMode: "move",
+            sourceDir: body.sourceDir || "",
           });
 
           // 文件夹上传：保留子目录结构
@@ -346,30 +349,7 @@ export function serveCommand(program: Command): void {
             await writeFile(metadataPath, serializeEntry(entry), "utf-8");
           }
 
-          // 入库后清理原始文件（仅当用户勾选时）
-          const deleted: string[] = [];
-          if (body.cleanupOriginals === "1" && files && files.length > 0) {
-            const { unlink } = await import("node:fs/promises");
-            for (const f of files) {
-              // 从 multer 时间戳文件名还原原始文件名
-              const uploadedName = f.originalname;
-              // 在当前目录中查找同名文件
-              const targetPath = resolve(stashRoot, uploadedName);
-              try {
-                const { stat: fsStat } = await import("node:fs/promises");
-                await fsStat(targetPath); // 检查是否存在
-                await unlink(targetPath);
-                deleted.push(uploadedName);
-              } catch {
-                // 文件不存在或无法删除，跳过
-              }
-            }
-            if (deleted.length > 0) {
-              console.log(`[cleanup] 已删除 ${deleted.length} 个原始文件: ${deleted.join(", ")}`);
-            }
-          }
-
-          res.status(201).json({ ...entry, _cleaned: deleted || [] });
+          res.status(201).json(entry);
         } catch (err: any) {
           console.error("[API Error]", err instanceof Error ? err.message : String(err));
           res.status(500).json({ error: "服务器内部错误" });
@@ -500,10 +480,18 @@ export function serveCommand(program: Command): void {
             return;
           }
 
-          res.setHeader("Content-Type", file.mimeType);
-          res.setHeader("Content-Disposition", `inline; filename="${file.name}"`);
+          // 文本类型加 UTF-8 编码，防止中文乱码
+          let contentType = file.mimeType;
+          if (contentType.startsWith("text/") || contentType === "application/json") {
+            contentType += "; charset=utf-8";
+          }
+          res.setHeader("Content-Type", contentType);
+          // RFC 5987: 中文文件名需要 UTF-8 编码
+          const encodedName = encodeURIComponent(file.name);
+          res.setHeader("Content-Disposition", `inline; filename*=UTF-8''${encodedName}`);
           createReadStream(filePath).pipe(res);
         } catch (err: any) {
+          console.error("[File Error]", req.params.id, req.params.filename, err instanceof Error ? err.message : String(err));
           res.status(500).json({ error: "服务器内部错误" });
         }
       });
@@ -611,67 +599,6 @@ export function serveCommand(program: Command): void {
           const fp = resolve(stashRoot, "entries", req.params.id, "notes", req.params.noteFile);
           await unlink(fp);
           res.json({ deleted: true });
-        } catch (err: any) {
-          console.error("[API Error]", err instanceof Error ? err.message : String(err));
-          res.status(500).json({ error: "服务器内部错误" });
-        }
-      });
-
-      // POST /api/entries/:id/cleanup-originals — 清理原始文件
-      app.post("/api/entries/:id/cleanup-originals", async (req, res) => {
-        try {
-          const entry = await readEntry(stashRoot, req.params.id);
-          if (!entry) {
-            res.status(404).json({ error: "条目不存在" });
-            return;
-          }
-          const { unlink, stat: fsStat, readdir: rd } = await import("node:fs/promises");
-          const { join } = await import("node:path");
-
-          // 递归列出目录中所有文件（排除 entries/ 和 .logstash/）
-          async function listFiles(dir: string): Promise<string[]> {
-            const results: string[] = [];
-            try {
-              const items = await rd(dir, { withFileTypes: true });
-              for (const item of items) {
-                if (item.name === "entries" || item.name === ".logstash" || item.name === ".git") continue;
-                const full = join(dir, item.name);
-                if (item.isDirectory()) {
-                  results.push(...await listFiles(full));
-                } else {
-                  results.push(full);
-                }
-              }
-            } catch { /* skip */ }
-            return results;
-          }
-
-          const allFiles = await listFiles(stashRoot);
-          const deleted: string[] = [];
-
-          for (const f of entry.files) {
-            // 还原原始文件名（去掉 multer 时间戳前缀）
-            let originalName = f.name;
-            if (/^\d{13}_/.test(f.name)) {
-              originalName = f.name.replace(/^\d{13}_/, "");
-            }
-
-            // 在目录中查找匹配的原始文件（按文件名）
-            for (const fp of allFiles) {
-              const base = fp.replace(/^.*[\\\/]/, ""); // basename
-              if (base === originalName || base === f.name) {
-                try {
-                  await unlink(fp);
-                  deleted.push(originalName);
-                  console.log(`[cleanup] Deleted: ${fp}`);
-                } catch { /* skip locked files */ }
-                break;
-              }
-            }
-          }
-
-          console.log(`[cleanup] Entry ${req.params.id}: deleted ${deleted.length} of ${entry.files.length} original files`);
-          res.json({ deleted, count: deleted.length });
         } catch (err: any) {
           console.error("[API Error]", err instanceof Error ? err.message : String(err));
           res.status(500).json({ error: "服务器内部错误" });

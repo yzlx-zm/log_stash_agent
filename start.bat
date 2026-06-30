@@ -12,15 +12,13 @@ if %errorlevel% neq 0 (
     exit /b 1
 )
 
-if not exist "dist\main.js" (
-    echo [BUILD] Compiling...
-    call npm install --silent
-    call npm run build
-    if %errorlevel% neq 0 (
-        echo [ERROR] Build failed
-        pause
-        exit /b 1
-    )
+echo [BUILD] Compiling...
+call npm install --silent
+call npm run build
+if %errorlevel% neq 0 (
+    echo [ERROR] Build failed
+    pause
+    exit /b 1
 )
 
 echo [START] Starting Web server at http://localhost:3000

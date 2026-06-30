@@ -44,6 +44,8 @@ export interface CreateEntryInput {
   fileMode?: "copy" | "move";
   /** 可选的手动指定 ID（不指定则自动生成） */
   id?: string;
+  /** 原始文件来源目录（用于后续清理） */
+  sourceDir?: string;
 }
 
 /**
@@ -111,6 +113,7 @@ export async function createEntry(
     environment: input.environment ?? {},
     results: input.results ?? {},
     relatedEntries: [],
+    sourceDir: input.sourceDir || "",
     files: entryFiles,
     createdAt: now,
     updatedAt: now,
@@ -197,6 +200,7 @@ export async function updateEntry(
     environment: Record<string, string>;
     results: Record<string, number | string>;
     relatedEntries: string[];
+    sourceDir?: string;
   }>
 ): Promise<Entry | null> {
   const entry = await readEntry(rootDir, entryId);
@@ -218,6 +222,8 @@ export async function updateEntry(
   if (updates.results !== undefined) entry.results = updates.results;
   if (updates.relatedEntries !== undefined)
     entry.relatedEntries = updates.relatedEntries;
+  if (updates.sourceDir !== undefined)
+    entry.sourceDir = updates.sourceDir;
 
   entry.updatedAt = nowISO();
 

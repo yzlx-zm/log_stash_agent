@@ -303,6 +303,10 @@
         <input type="text" id="addTags" placeholder="如：wifi, regression, 夜间测试">
       </div>
       <div class="form-group">
+        <label>原始文件来源目录（用于追溯文件出处）</label>
+        <input type="text" id="addSourceDir" placeholder="选填，记录原始文件所在目录。如：X:\...\stress_logs">
+      </div>
+      <div class="form-group">
         <label>描述</label>
         <textarea id="addDesc" placeholder="测试目的、环境、发现的问题…"></textarea>
       </div>
@@ -323,9 +327,9 @@
         </div>
         <div class="file-summary" id="fileSummary" style="display:none;"></div>
         <div class="file-list-scroll" id="fileList"></div>
-        <label style="display:flex;align-items:center;gap:6px;margin-top:6px;font-size:12px;color:var(--text-muted);cursor:pointer;">
-          <input type="checkbox" id="cleanupCheck"> 入库成功后删除当前目录的原始文件（节省磁盘空间）
-        </label>
+        <div style="font-size:11px;color:var(--text-muted);margin-top:6px;padding:6px 8px;background:#fffbeb;border-radius:6px;">
+          💡 文件入库后会保留原始文件的来源路径记录，方便后续追溯。原始文件不会被删除。
+        </div>
       </div>
 
       <button class="btn btn-primary" style="width:100%;" onclick="addEntry()" id="addBtn">
@@ -346,7 +350,6 @@
     <div class="modal-footer">
       <button class="btn btn-outline btn-sm" onclick="analyzeEntry()" id="analyzeBtn">🤖 AI 分析</button>
       <button class="btn btn-outline btn-sm" onclick="editEntry()">✏️ 编辑</button>
-      <button class="btn btn-outline btn-sm" onclick="cleanupOriginals()" id="cleanupBtn">🧹 清理原始文件</button>
       <button class="btn btn-danger btn-sm" onclick="deleteEntryConfirm()">🗑 删除</button>
       <button class="btn btn-outline btn-sm" onclick="closeModal()">关闭</button>
     </div>
@@ -616,6 +619,11 @@ function renderDetail(e) {
     html += `<div style="margin-top:12px;"><strong style="font-size:13px;color:var(--text-muted);">关联条目</strong><div>${e.relatedEntries.map(id => `<span class="tag" style="cursor:pointer;" onclick="openDetail('${escHtml(id)}')">${escHtml(id)}</span>`).join(' ')}</div></div>`;
   }
 
+  // 来源目录
+  if (e.sourceDir) {
+    html += `<div style="margin-top:12px;font-size:12px;color:var(--text-muted);">📂 来源: ${escHtml(e.sourceDir)}</div>`;
+  }
+
   // 分析笔记区域 — 多条独立记录
   html += `<div style="margin-top:16px;border-top:1px solid var(--border);padding-top:12px;">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
@@ -661,6 +669,7 @@ function editEntry() {
     </div>
     <div class="form-group"><label>标签（逗号分隔）</label><input type="text" id="editTags" value="${escHtml((e.tags||[]).join(', '))}"></div>
     <div class="form-group"><label>描述</label><textarea id="editDesc" rows="4">${escHtml(e.description||'')}</textarea></div>
+    <div class="form-group"><label>来源目录</label><input type="text" id="editSourceDir" value="${escHtml(e.sourceDir||'')}" placeholder="原始文件所在目录"></div>
     <div style="display:flex;gap:8px;margin-top:12px;">
       <button class="btn btn-primary btn-sm" onclick="saveEdit()">保存</button>
       <button class="btn btn-outline btn-sm" onclick="openDetail('${escHtml(e.id)}')">取消</button>
@@ -680,6 +689,7 @@ async function saveEdit() {
     status: document.getElementById('editStatus').value,
     tags: document.getElementById('editTags').value.split(',').map(t => t.trim()).filter(Boolean),
     description: document.getElementById('editDesc').value.trim(),
+    sourceDir: document.getElementById('editSourceDir').value.trim(),
   };
 
   try {
@@ -697,12 +707,14 @@ async function saveEdit() {
   } catch(err) { toast('保存失败', 'error'); }
 }
 
+let deleting = false;
 async function deleteEntryConfirm() {
-  if (!currentEntry) return;
+  if (!currentEntry || deleting) return;
   if (!confirm(`确认删除 ${currentEntry.id}?\n\n"${currentEntry.title}"\n\n此操作不可逆，将删除所有附件！`)) return;
 
+  deleting = true;
   try {
-    const r = await fetch(`/api/entries/${currentEntry.id}`, { method: 'DELETE' });
+    const r = await fetch('/api/entries/' + currentEntry.id, { method: 'DELETE' });
     if (!r.ok) { const err = await r.json(); toast(err.error, 'error'); return; }
     toast('已删除', 'success');
     closeModal();
@@ -710,6 +722,8 @@ async function deleteEntryConfirm() {
     loadStats();
   } catch(err) {
     toast('删除失败', 'error');
+  } finally {
+    deleting = false;
   }
 }
 
@@ -736,6 +750,7 @@ async function addEntry() {
   form.append('status', document.getElementById('addStatus').value);
   form.append('tags', document.getElementById('addTags').value.trim());
   form.append('description', document.getElementById('addDesc').value.trim());
+  form.append('sourceDir', document.getElementById('addSourceDir').value.trim());
 
   // 收集文件 + 相对路径（文件夹上传时保留目录结构）
   const relativePaths = [];
@@ -748,18 +763,12 @@ async function addEntry() {
     relativePaths.push(relDir);
   }
   form.append('relativePaths', JSON.stringify(relativePaths));
-  // 入库后清理原始文件
-  form.append('cleanupOriginals', document.getElementById('cleanupCheck').checked ? '1' : '0');
 
   try {
     const r = await fetch('/api/entries', { method: 'POST', body: form });
     if (!r.ok) { const err = await r.json(); toast(err.error, 'error'); return; }
     const entry = await r.json();
-    let msg = `已创建: ${entry.id}`;
-    if (entry._cleaned && entry._cleaned.length > 0) {
-      msg += ` | 已清理 ${entry._cleaned.length} 个原始文件`;
-    }
-    toast(msg, 'success');
+    toast(`已创建: ${entry.id}`, 'success');
 
     // Reset form
     document.getElementById('addTitle').value = '';
@@ -935,15 +944,18 @@ async function saveNoteModal() {
   }
 }
 
+let noteDeleting = false;
 async function deleteNoteModal() {
-  if (!currentNoteFile) return;
+  if (!currentNoteFile || noteDeleting) return;
   if (!confirm('确认删除这条笔记？此操作不可逆。')) return;
+  noteDeleting = true;
   try {
     await fetch('/api/entries/' + currentNoteEntryId + '/notes/' + encodeURIComponent(currentNoteFile), { method: 'DELETE' });
     toast('已删除', 'success');
     closeNoteModal();
     loadNotesList(currentNoteEntryId);
   } catch(e) { toast('删除失败', 'error'); }
+  finally { noteDeleting = false; }
 }
 
 function closeNoteModal() {
@@ -958,30 +970,6 @@ function closeNoteModal() {
 
 // Remove old auto-save logic (no longer needed with multi-note system)
 async function saveNotesSilent(_entryId) { /* deprecated */ }
-
-// ========================================
-// Cleanup original files
-// ========================================
-async function cleanupOriginals() {
-  if (!currentEntry) return;
-  if (!confirm('将删除当前目录中与已入库文件同名的原始文件。\n\n文件已在系统中安全保存，此操作仅删除原始副本。')) return;
-  const btn = document.getElementById('cleanupBtn');
-  btn.disabled = true; btn.textContent = '清理中...';
-  try {
-    const r = await fetch('/api/entries/' + currentEntry.id + '/cleanup-originals', { method: 'POST' });
-    const d = await r.json();
-    btn.textContent = '🧹 清理原始文件';
-    btn.disabled = false;
-    if (d.count > 0) {
-      toast('已清理 ' + d.count + ' 个原始文件', 'success');
-    } else {
-      toast('未找到可清理的原始文件', 'success');
-    }
-  } catch(e) {
-    btn.disabled = false; btn.textContent = '🧹 清理原始文件';
-    toast('清理失败', 'error');
-  }
-}
 
 // ========================================
 // AI Analysis

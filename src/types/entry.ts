@@ -66,6 +66,8 @@ export interface Entry {
   results: Record<string, number | string>;
   /** 关联的其他 Entry ID */
   relatedEntries: string[];
+  /** 原始文件来源目录（用于清理时扫描，为空则用 stash 根目录） */
+  sourceDir?: string;
   /** 附件列表 */
   files: EntryFile[];
   /** 创建时间 (ISO 8601) */
